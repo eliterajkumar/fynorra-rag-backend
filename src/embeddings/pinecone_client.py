@@ -1,268 +1,262 @@
-"""Pinecone vector database client wrapper with integrated embeddings support."""
-from pinecone import Pinecone, ServerlessSpec
-from typing import List, Dict, Any, Optional
-from src.config import Config
-import requests
+"""
+Pinecone client wrapper with OpenAI embeddings (default) and optional
+commented-out open-source all-MiniLM-L6-v2 embedding code.
+
+Usage:
+    from src.embeddings.pinecone_client import PineconeClient
+    pc = PineconeClient()
+    pc.upsert_texts(namespace="user_123", records=[{"id":"doc1_chunk0","text":"hello world","metadata":{}}])
+    res = pc.query_text(namespace="user_123", text="hello", top_k=5)
+"""
+
+import os
 import time
+import math
+import logging
 import random
+from typing import List, Dict, Any, Optional, Callable
+
+from pinecone import Pinecone
+from openai import OpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+# Optional: uncomment to use local sentence-transformers (all-MiniLM-L6-v2)
+# from sentence_transformers import SentenceTransformer
+
+# Basic config via env or defaults
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY", "")
+PINECONE_ENV = os.getenv("PINECONE_ENV", "")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "default-index")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", "64"))
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")  # OpenAI embedding model
+OPENAI_TIMEOUT = int(os.getenv("OPENAI_TIMEOUT", "60"))
+
+# Logging
+logger = logging.getLogger("pinecone_client")
+logging.basicConfig(level=logging.INFO)
+
+# Init OpenAI client
+openai_client = OpenAI(api_key=OPENAI_API_KEY)
+
+
+def _chunk_list(lst: List[Any], size: int) -> List[List[Any]]:
+    return [lst[i : i + size] for i in range(0, len(lst), size)]
+
+
+# Tenacity retry decorator for network calls (OpenAI/Pinecone)
+network_retry = retry(
+    reraise=True,
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=1, max=20),
+    retry=retry_if_exception_type(Exception),
+)
 
 
 class PineconeClient:
-    """Wrapper for Pinecone vector operations with text-based integrated embeddings."""
-    
-    def __init__(self, api_key: str = None, env: str = None, index: str = None):
+    def __init__(
+        self,
+        pinecone_api_key: Optional[str] = None,
+        pinecone_env: Optional[str] = None,
+        index_name: Optional[str] = None,
+        openai_api_key: Optional[str] = None,
+        embedding_model: Optional[str] = None,
+        batch_size: Optional[int] = None,
+    ):
         """
-        Initialize Pinecone client.
-        
-        Args:
-            api_key: Pinecone API key (defaults to Config)
-            env: Pinecone environment/region (defaults to Config)
-            index: Index name (defaults to Config)
+        PineconeClient that computes embeddings using OpenAI (default) and upserts/queries Pinecone.
+
+        Methods:
+            upsert_texts(namespace, records): records = [{"id": str, "text": str, "metadata": dict}, ...]
+            query_text(namespace, text, top_k)
+            upsert_vectors(vectors)  # precomputed vectors
+            query_vectors(query_vector, top_k)
         """
-        self.api_key = api_key or Config.PINECONE_API_KEY
-        self.index_name = index or Config.PINECONE_INDEX
-        self.env = env or Config.PINECONE_ENV or "us-east-1"
-        
-        # Initialize Pinecone SDK for control-plane operations
-        self.pc = Pinecone(api_key=self.api_key)
-        self.index = None
-        self.base_url = None
-        
-        self._ensure_index()
-        
-        # Get data-plane URL from index host
-        if self.index and hasattr(self.index, 'host'):
-            self.base_url = f"https://{self.index.host}"
-        else:
-            # Fallback: try to construct URL (may need adjustment based on actual Pinecone setup)
-            # For serverless, format is typically: {index-name}.{project-id}.svc.{environment}.pinecone.io
-            # We'll use a simpler format that might need environment-specific configuration
-            self.base_url = f"https://{self.index_name}.svc.pinecone.io"
-    
-    def _ensure_index(self):
-        """Ensure the index exists, create if not."""
-        # Check if index exists
+        self.pinecone_api_key = pinecone_api_key or PINECONE_API_KEY
+        self.pinecone_env = pinecone_env or PINECONE_ENV
+        self.index_name = index_name or PINECONE_INDEX
+        self.embedding_model = embedding_model or EMBEDDING_MODEL
+        self.batch_size = batch_size or BATCH_SIZE
+
+        if not self.pinecone_api_key:
+            raise ValueError("PINECONE_API_KEY is required")
+
+        # Initialize Pinecone
+        self.pc = Pinecone(api_key=self.pinecone_api_key)
+        # Ensure index exists (no-op if exists)
         existing_indexes = [idx.name for idx in self.pc.list_indexes()]
-        
         if self.index_name not in existing_indexes:
-            # Create index with integrated embeddings (e5 model, typically 768 dimensions)
-            # Note: When using integrated embeddings, dimension is set automatically
+            logger.info("Creating Pinecone index '%s' with default dimension=1536 (adjust if needed)", self.index_name)
+            # dimension depends on embedding model; text-embedding-3-small -> 1536
+            # adjust dimension if using different model
             self.pc.create_index(
-                name=self.index_name,
-                dimension=768,  # Default for e5 embeddings
+                name=self.index_name, 
+                dimension=1536, 
                 metric="cosine",
-                spec=ServerlessSpec(
-                    cloud="aws",
-                    region=self.env
-                )
+                spec={"serverless": {"cloud": "aws", "region": "us-east-1"}}
             )
-        
         self.index = self.pc.Index(self.index_name)
-    
-    def _retry_with_backoff(self, func, max_retries: int = 3, initial_delay: float = 1.0):
+
+        # Optional: initialize sentence-transformers locally (commented)
+        # self.local_encoder = SentenceTransformer("all-MiniLM-L6-v2")  # uncomment to use local encoder
+
+    # ---------------------
+    # Embedding helpers
+    # ---------------------
+    @network_retry
+    def _embed_texts_openai(self, texts: List[str]) -> List[List[float]]:
         """
-        Retry a function with exponential backoff and jitter.
-        
+        Batch embeddings via OpenAI. Retries on network errors.
+        """
+        # OpenAI allows batching; chunk accordingly
+        embeddings: List[List[float]] = []
+        # Guard: empty
+        if not texts:
+            return embeddings
+
+        # Call OpenAI in batches to avoid giant requests
+        text_batches = _chunk_list(texts, self.batch_size)
+        for batch in text_batches:
+            # Using the embeddings.create endpoint
+            resp = openai_client.embeddings.create(model=self.embedding_model, input=batch, timeout=OPENAI_TIMEOUT)
+            # resp['data'] is a list aligned with inputs
+            batch_embeddings = [d["embedding"] for d in resp["data"]]
+            embeddings.extend(batch_embeddings)
+            # small sleep to be polite
+            time.sleep(0.1)
+        return embeddings
+
+    # Optional open-source encoder (commented): use this if you want to run embeddings locally (no OpenAI)
+    # def _embed_texts_local(self, texts: List[str]) -> List[List[float]]:
+    #     """
+    #     Local embedding using sentence-transformers all-MiniLM-L6-v2.
+    #     Pros: free, deterministic. Cons: lower dimensionality (384), slower on CPU.
+    #     """
+    #     if not texts:
+    #         return []
+    #     # The local encoder returns numpy arrays; convert to lists
+    #     vectors = self.local_encoder.encode(texts, show_progress_bar=False)
+    #     return [v.tolist() for v in vectors]
+
+    # ---------------------
+    # Upsert helpers
+    # ---------------------
+    def upsert_texts(self, namespace: str, records: List[Dict[str, Any]], batch_size: Optional[int] = None) -> Dict[str, int]:
+        """
+        Upsert text records by computing OpenAI embeddings and upserting vectors to Pinecone.
+
         Args:
-            func: Function to retry (should raise exception on failure)
-            max_retries: Maximum number of retries
-            initial_delay: Initial delay in seconds
-        
+            namespace: Pinecone namespace (per-user or global)
+            records: [{"id": str, "text": str, "metadata": dict}, ...]
+            batch_size: override batch size for embedding/upsert (optional)
         Returns:
-            Function result
-        """
-        delay = initial_delay
-        last_exception = None
-        
-        for attempt in range(max_retries + 1):
-            try:
-                return func()
-            except (requests.exceptions.HTTPError, requests.exceptions.RequestException) as e:
-                last_exception = e
-                if attempt < max_retries:
-                    # Exponential backoff with jitter
-                    jitter = random.uniform(0, 0.3 * delay)
-                    time.sleep(delay + jitter)
-                    delay *= 2
-                else:
-                    break
-        
-        raise last_exception
-    
-    def upsert_texts(self, namespace: str, records: List[dict], batch_size: int = None) -> dict:
-        """
-        Upsert text records to Pinecone using integrated embeddings (server-side).
-        
-        Args:
-            namespace: Per-user namespace or global namespace
-            records: List of dicts, each with {"id": str, "text": str, "metadata": dict}
-            batch_size: Batch size for upserts (defaults to Config.BATCH_SIZE)
-        
-        Returns:
-            dict: Summary { "batches_upserted": n, "records_upserted": m }
-        
-        Raises:
-            Exception: On upsert failure after retries
+            {"batches_upserted": n, "records_upserted": m}
         """
         if not records:
             return {"batches_upserted": 0, "records_upserted": 0}
-        
-        batch_size = batch_size or Config.BATCH_SIZE
-        
-        # Split into batches
-        batches = [records[i:i + batch_size] for i in range(0, len(records), batch_size)]
-        
-        total_upserted = 0
-        
+
+        batch_size = batch_size or self.batch_size
+
+        # Split into batches to embed & upsert
+        batches = _chunk_list(records, batch_size)
+        total = 0
         for batch in batches:
-            # Prepare records for Pinecone API
-            pinecone_records = []
-            for rec in batch:
-                pinecone_records.append({
-                    "id": rec["id"],
-                    "text": rec["text"],  # Pinecone will embed this server-side
-                    "metadata": rec.get("metadata", {})
-                })
-            
-            # Upsert via REST API (using records endpoint for text-based upserts)
-            url = f"{self.base_url}/vectors/upsert"
-            if namespace:
-                url = f"{self.base_url}/namespaces/{namespace}/vectors/upsert"
-            
-            headers = {
-                "Api-Key": self.api_key,
-                "Content-Type": "application/json"
-            }
-            
-            # Note: Pinecone API may use "records" or "vectors" depending on API version
-            # Using "vectors" for compatibility, but may need "records" for text-based upserts
-            payload = {"vectors": pinecone_records}
-            
-            def _upsert_batch():
-                response = requests.post(url, json=payload, headers=headers, timeout=60)
-                response.raise_for_status()
-                return response.json()
-            
-            # Retry on 429/5xx
-            result = self._retry_with_backoff(_upsert_batch)
-            total_upserted += len(batch)
-        
-        return {
-            "batches_upserted": len(batches),
-            "records_upserted": total_upserted
-        }
-    
-    def query_text(self, namespace: str, text: str, top_k: int = 8, include_metadata: bool = True, filter_dict: Dict = None) -> List[dict]:
+            ids = [r["id"] for r in batch]
+            texts = [r["text"] for r in batch]
+            metas = [r.get("metadata", {}) for r in batch]
+
+            # Compute embeddings (OpenAI)
+            embeddings = self._embed_texts_openai(texts)
+
+            # Prepare Pinecone vectors: {'id':..., 'values': [...], 'metadata': {...}}
+            vectors = []
+            for _id, vec, meta in zip(ids, embeddings, metas):
+                vectors.append({"id": _id, "values": vec, "metadata": meta})
+
+            # Upsert to Pinecone (with retries)
+            self._upsert_with_retry(vectors=vectors, namespace=namespace)
+            total += len(vectors)
+
+        return {"batches_upserted": len(batches), "records_upserted": total}
+
+    @network_retry
+    def _upsert_with_retry(self, vectors: List[Dict[str, Any]], namespace: Optional[str] = None):
         """
-        Query Pinecone using text (server-side embedding).
-        
-        Args:
-            namespace: Namespace to query
-            text: Query text (will be embedded by Pinecone)
-            top_k: Number of results
-            include_metadata: Include metadata in results
-            filter_dict: Metadata filters (e.g., {"user_id": "..."})
-        
-        Returns:
-            List of results: [{"id": str, "score": float, "metadata": dict}, ...]
+        Upsert vectors to Pinecone index with retry wrapper.
         """
-        url = f"{self.base_url}/query"
+        if not self.index:
+            raise ValueError("Pinecone index not initialized")
         if namespace:
-            url = f"{self.base_url}/namespaces/{namespace}/query"
-        
-        headers = {
-            "Api-Key": self.api_key,
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "topK": top_k,
-            "includeMetadata": include_metadata,
-            "text": text  # Pinecone will embed this server-side
-        }
-        
-        if filter_dict:
-            payload["filter"] = filter_dict
-        
-        def _query():
-            response = requests.post(url, json=payload, headers=headers, timeout=30)
-            response.raise_for_status()
-            return response.json()
-        
-        result = self._retry_with_backoff(_query)
-        return result.get("matches", [])
-    
-    def upsert_vectors(self, vectors: List[Dict[str, Any]]):
+            return self.index.upsert(vectors=vectors, namespace=namespace)
+        return self.index.upsert(vectors=vectors)
+
+    def upsert_vectors(self, vectors: List[Dict[str, Any]], namespace: Optional[str] = None):
         """
-        Legacy method: Upsert pre-computed vectors to Pinecone.
-        
-        Args:
-            vectors: List of dicts with 'id', 'values', and 'metadata'
+        Upsert pre-computed vectors directly.
+        Each vector dict: {'id': str, 'values': List[float], 'metadata': dict}
         """
         if not vectors:
             return
-        
-        self.index.upsert(vectors=vectors)
-    
-    def query_vectors(self, query_vector: List[float], top_k: int = None, filter_dict: Dict = None) -> List[Dict]:
+        # chunk to avoid giant payloads
+        for chunk in _chunk_list(vectors, self.batch_size):
+            self._upsert_with_retry(vectors=chunk, namespace=namespace)
+
+    # ---------------------
+    # Query helpers
+    # ---------------------
+    def query_vectors(self, query_vector: List[float], top_k: int = 8, namespace: Optional[str] = None, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
-        Legacy method: Query using pre-computed query vector.
-        
-        Args:
-            query_vector: Embedding vector to search for
-            top_k: Number of results (defaults to config)
-            filter_dict: Metadata filters (e.g., {"user_id": "..."})
-        
-        Returns:
-            List of matches with 'id', 'score', and 'metadata'
+        Query Pinecone with a precomputed query vector.
+        Returns list of matches (id, score, metadata).
         """
-        top_k = top_k or Config.TOP_K
-        
-        results = self.index.query(
-            vector=query_vector,
-            top_k=top_k,
-            include_metadata=True,
-            filter=filter_dict
-        )
-        
-        return results.get("matches", [])
-    
-    def delete_vectors(self, ids: List[str]):
-        """Delete vectors by IDs."""
-        if ids:
-            self.index.delete(ids=ids)
-    
-    def delete_by_filter(self, filter_dict: Dict):
-        """Delete vectors by metadata filter."""
-        self.index.delete(filter=filter_dict)
-    
-    def create_index_for_model(self, index_name: str, model: str = "e5", dimension: int = 768, metric: str = "cosine") -> dict:
+        if filter:
+            res = self.index.query(vector=query_vector, top_k=top_k, include_values=False, include_metadata=True, namespace=namespace, filter=filter)
+        else:
+            res = self.index.query(vector=query_vector, top_k=top_k, include_values=False, include_metadata=True, namespace=namespace)
+        return res.get("matches", [])
+
+    def query_text(self, namespace: Optional[str], text: str, top_k: int = 8, filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """
-        Optional control-plane wrapper to create index with hosted model.
-        
-        Args:
-            index_name: Name of index to create
-            model: Embedding model name (e.g., "e5")
-            dimension: Vector dimension
-            metric: Similarity metric
-        
-        Returns:
-            dict: Creation result
+        Compute embedding for `text` (via OpenAI) and query Pinecone.
+        Returns Pinecone matches list with metadata.
+        """
+        # Embed query
+        q_emb = self._embed_texts_openai([text])
+        if not q_emb:
+            return []
+        return self.query_vectors(query_vector=q_emb[0], top_k=top_k, namespace=namespace, filter=filter)
+
+    # ---------------------
+    # Delete / management
+    # ---------------------
+    def delete_vectors(self, ids: List[str], namespace: Optional[str] = None):
+        if not ids:
+            return
+        # Pinecone delete supports ids list
+        if namespace:
+            return self.index.delete(ids=ids, namespace=namespace)
+        return self.index.delete(ids=ids)
+
+    def delete_by_filter(self, filter: Dict[str, Any], namespace: Optional[str] = None):
+        if not filter:
+            return
+        # Pinecone delete by filter
+        if namespace:
+            return self.index.delete(delete_filter=filter, namespace=namespace)
+        return self.index.delete(delete_filter=filter)
+
+    def create_index_for_model(self, index_name: str, dimension: int = 1536, metric: str = "cosine"):
+        """
+        Create an index if not exists. Default dimension 1536 (OpenAI text-embedding-3-small).
+        Adjust dimension for different models.
         """
         existing_indexes = [idx.name for idx in self.pc.list_indexes()]
-        
         if index_name in existing_indexes:
             return {"status": "exists", "index": index_name}
-        
         self.pc.create_index(
-            name=index_name,
-            dimension=dimension,
+            name=index_name, 
+            dimension=dimension, 
             metric=metric,
-            spec=ServerlessSpec(
-                cloud="aws",
-                region=self.env
-            )
+            spec={"serverless": {"cloud": "aws", "region": "us-east-1"}}
         )
-        
         return {"status": "created", "index": index_name}
-

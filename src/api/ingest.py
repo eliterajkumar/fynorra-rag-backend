@@ -38,8 +38,10 @@ def upload_file():
                 "error": f"File size exceeds maximum allowed size of {Config.MAX_UPLOAD_BYTES} bytes ({Config.MAX_UPLOAD_BYTES // (1024*1024)}MB)"
             }), 400
         
-        file_type = file.filename.split(".")[-1] if "." in file.filename else "txt"
-        storage_path = storage.upload_file(file_content, file.filename, user_id)
+        file_type = file.filename.split(".")[-1] if file.filename and "." in file.filename else "txt"
+        # Ensure we pass a non-None filename to storage.upload_file
+        safe_filename = file.filename if file.filename else f"{uuid.uuid4()}.{file_type}"
+        storage_path = storage.upload_file(file_content, safe_filename, user_id)
         
         # Create document record
         document = Document(
@@ -148,7 +150,8 @@ def get_upload_status():
         
         # Check if user owns this job
         user_info = g.current_user
-        if job.user_id != get_or_create_user(user_info["supabase_user_id"], user_info["email"]):
+        current_user_id = get_or_create_user(user_info["supabase_user_id"], user_info["email"])
+        if str(job.user_id) != str(current_user_id):
             return jsonify({"error": "Unauthorized"}), 403
         
         return jsonify({
@@ -156,8 +159,8 @@ def get_upload_status():
             "status": job.status,
             "progress": job.progress,
             "errorMessage": job.error_message,
-            "createdAt": job.created_at.isoformat() if job.created_at else None,
-            "updatedAt": job.updated_at.isoformat() if job.updated_at else None
+            "createdAt": job.created_at.isoformat() if getattr(job, "created_at", None) is not None else None,
+            "updatedAt": job.updated_at.isoformat() if getattr(job, "updated_at", None) is not None else None
         }), 200
         
     finally:

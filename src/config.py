@@ -2,6 +2,10 @@
 import os
 from typing import Optional
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load .env from project root if present (local/dev convenience)
+load_dotenv(dotenv_path=Path(".env"), override=False)
 
 
 class Config:
@@ -27,10 +31,13 @@ class Config:
     FYNORRA_EMBEDDING_URL: str = os.getenv("FYNORRA_EMBEDDING_URL", "https://api.fynorra.com/v1/embeddings")
     FYNORRA_LLM_URL: str = os.getenv("FYNORRA_LLM_URL", "https://api.fynorra.com/v1/chat/completions")
     
-    # OpenRouter (default LLM)
+    # OpenRouter (default LLM with free tier)
     OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_BASE_URL: str = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b")
+    OPENROUTER_MODEL: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.2-3b-instruct:free")
+    
+    # OpenAI (for embeddings and fallback LLM)
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     
     # Security
     MASTER_KEY: str = os.getenv("MASTER_KEY", "")
@@ -50,7 +57,7 @@ class Config:
     CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "1000"))
     CHUNK_OVERLAP: int = int(os.getenv("CHUNK_OVERLAP", "200"))
     TOP_K: int = int(os.getenv("TOP_K", "5"))
-    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "500"))
+    MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", "500"))  # Free tier limit
     
     # Upload & Processing
     MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", "20971520"))  # 20MB

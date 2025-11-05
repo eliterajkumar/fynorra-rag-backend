@@ -60,7 +60,7 @@ def update_settings():
         # Update fields
         if "customLLMAPIKey" in data:
             if data["customLLMAPIKey"]:
-                settings.custom_llm_api_key_encrypted = encrypt_api_key(data["customLLMAPIKey"])
+                settings.custom_llm_api_key_encrypted = str(encrypt_api_key(data["customLLMAPIKey"]))
             else:
                 settings.custom_llm_api_key_encrypted = None
         

@@ -1,16 +1,16 @@
 """Text chunking utilities for RAG."""
-from typing import List
+from typing import List, Optional
 from src.config import Config
 
 
 class TextChunker:
     """Chunk text into smaller pieces for embedding."""
     
-    def __init__(self, chunk_size: int = None, chunk_overlap: int = None):
+    def __init__(self, chunk_size: 'Optional[int]' = None, chunk_overlap: 'Optional[int]' = None):
         self.chunk_size = chunk_size or Config.CHUNK_SIZE
         self.chunk_overlap = chunk_overlap or Config.CHUNK_OVERLAP
     
-    def chunk_text(self, text: str, metadata: dict = None) -> List[dict]:
+    def chunk_text(self, text: str, metadata: Optional[dict] = None) -> List[dict]:
         """
         Split text into chunks with overlap.
         
@@ -42,7 +42,7 @@ class TextChunker:
                 "content": chunk_text.strip(),
                 "start_char": start,
                 "end_char": end,
-                **metadata if metadata else {}
+                **(metadata or {})
             }
             chunks.append(chunk_data)
             
@@ -51,7 +51,7 @@ class TextChunker:
         
         return chunks
     
-    def chunk_pages(self, pages: List[str], max_chars: int = None, overlap: int = None) -> List[dict]:
+    def chunk_pages(self, pages: List[str], max_chars: Optional[int] = None, overlap: Optional[int] = None) -> List[dict]:
         """
         Chunk a list of pages, preserving page information.
         
@@ -106,7 +106,7 @@ class TextChunker:
         
         return chunks
     
-    def chunk_text_with_pages(self, text: str, page_breaks: List[int] = None) -> List[dict]:
+    def chunk_text_with_pages(self, text: str, page_breaks: Optional[List[int]] = None) -> List[dict]:
         """
         Legacy function: Chunk text preserving page information.
         

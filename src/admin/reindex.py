@@ -55,7 +55,8 @@ def reindex():
         embedding_adapter = EmbeddingAdapter()
         pinecone = PineconeClient()
         
-        chunk_contents = [chunk.content for chunk in chunks]
+        # Ensure we pass plain Python strings to embed_texts (cast SQLAlchemy Column -> str)
+        chunk_contents = [str(chunk.content) if chunk.content is not None else "" for chunk in chunks]
         embeddings = embedding_adapter.embed_texts(chunk_contents)
         
         vectors = []

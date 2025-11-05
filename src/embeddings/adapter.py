@@ -1,6 +1,6 @@
 """Embedding provider adapter for Fynorra and other APIs."""
 import requests
-from typing import List
+from typing import List, Optional
 from src.config import Config
 from src.security.crypto import decrypt_api_key
 
@@ -8,7 +8,7 @@ from src.security.crypto import decrypt_api_key
 class EmbeddingAdapter:
     """Adapter for generating embeddings from various providers."""
     
-    def __init__(self, api_key: str = None, custom_api_key_encrypted: str = None):
+    def __init__(self, api_key: 'Optional[str]' = None, custom_api_key_encrypted: 'Optional[str]' = None):
         """
         Initialize embedding adapter.
         

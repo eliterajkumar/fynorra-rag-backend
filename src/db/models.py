@@ -39,7 +39,7 @@ class Document(Base):
     source_url = Column(String)  # URL or file path in Supabase Storage
     storage_path = Column(String)  # Path in Supabase Storage
     file_type = Column(String)  # 'pdf', 'html', 'txt', etc.
-    metadata = Column(JSON)  # Additional metadata (page count, etc.)
+    doc_metadata = Column(JSON)  # Additional metadata (page count, etc.)
     chunk_count = Column(Integer, default=0)
     status = Column(String, default="pending")  # pending, processing, completed, failed
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,7 +62,7 @@ class Chunk(Base):
     start_char = Column(Integer)
     end_char = Column(Integer)
     page_number = Column(Integer)  # For PDFs
-    metadata = Column(JSON)  # Additional chunk metadata
+    chunk_metadata = Column(JSON)  # Additional chunk metadata
     pinecone_id = Column(String)  # Pinecone vector ID
     created_at = Column(DateTime, default=datetime.utcnow)
     
@@ -99,7 +99,7 @@ class UserSettings(Base):
     custom_llm_api_key_encrypted = Column(Text)  # Encrypted API key
     custom_embedding_api_key_encrypted = Column(Text)  # Encrypted embedding API key
     preferred_llm_provider = Column(String, default="fynorra")  # fynorra, openai, anthropic, etc.
-    metadata = Column(JSON)  # Additional settings
+    settings_metadata = Column(JSON)  # Additional settings
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

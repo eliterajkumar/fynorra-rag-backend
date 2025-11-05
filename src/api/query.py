@@ -56,8 +56,8 @@ def query_rag():
         
         for match in matches:
             metadata = match.get("metadata", {})
-            doc_id = metadata.get("doc_id") or metadata.get("document_id")  # Support both field names
-            chunk_preview = metadata.get("preview", "")
+            doc_id = metadata.get("document_id")  # Use document_id from worker
+            chunk_preview = metadata.get("text", "")  # Use text field from worker
             
             if doc_id and doc_id not in seen_doc_ids:
                 doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -90,9 +90,21 @@ def query_rag():
         ]
         
         # Call LLM (default to OpenRouter unless user settings override)
+        # Safely extract settings fields without triggering SQLAlchemy Column truthiness checks
+        custom_api_key_encrypted = ""
+        preferred_provider = "openrouter"
+        if settings is not None:
+            raw_key = getattr(settings, "custom_llm_api_key_encrypted", None)
+            if raw_key is not None:
+                # prefer .value if present (e.g., for encrypted fields), otherwise cast to str
+                custom_api_key_encrypted = raw_key.value if hasattr(raw_key, "value") else str(raw_key)
+            raw_provider = getattr(settings, "preferred_llm_provider", None)
+            if raw_provider is not None:
+                preferred_provider = str(raw_provider)
+
         llm_provider = LLMProvider(
-            custom_api_key_encrypted=settings.custom_llm_api_key_encrypted if settings else None,
-            provider=settings.preferred_llm_provider if settings else "openrouter"
+            custom_api_key_encrypted=custom_api_key_encrypted,
+            provider=preferred_provider
         )
         
         answer = llm_provider.chat_completion(messages, max_tokens=Config.MAX_TOKENS)

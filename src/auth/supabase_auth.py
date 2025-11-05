@@ -36,7 +36,7 @@ def require_auth(f):
 
 
 def get_supabase_client():  # Backwards-compat shim for any lingering imports
-    from supabase import create_client
+    from supabase.client import create_client
     from src.config import Config
     return create_client(Config.SUPABASE_URL, Config.SUPABASE_SERVICE_KEY)
 
@@ -58,7 +58,7 @@ def get_or_create_user(supabase_user_id: str, email: str) -> str:
             user = User(supabase_user_id=supabase_user_id, email=email)
             db.add(user)
             db.commit()
-        return user.id
+        return str(user.id)
     finally:
         db.close()
 

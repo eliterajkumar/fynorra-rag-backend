@@ -1,28 +1,33 @@
 # Flask and API
-Flask==3.0.0
-flask-cors==4.0.0
-gunicorn==21.2.0
+Flask
+flask-cors
+gunicorn
 
 # Database
-SQLAlchemy==2.0.23
-psycopg2-binary==2.9.9
+SQLAlchemy
+psycopg2-binary
 
 # Supabase
-supabase==2.0.0
-PyJWT==2.8.0
+supabase
+PyJWT
 
 # Vector DB
-pinecone-client==3.0.0
+pinecone-client
 pinecone
 
 # Async Tasks
 celery==5.3.4
 redis==5.0.1
 
-# Text Processing
+# Text Processing & LangChain
+langchain
+langchain-community
+langchain-openai==0.1.25
 pdfplumber==0.10.3
 beautifulsoup4==4.12.2
 lxml==4.9.3
+unstructured==0.11.8
+openai
 
 # HTTP Requests
 requests==2.31.0
