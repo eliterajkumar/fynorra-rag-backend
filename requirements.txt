@@ -36,3 +36,4 @@ pytest
 
 # CLI
 click
+tenacity
