@@ -119,8 +119,8 @@ class PineconeClient:
         for batch in text_batches:
             # Using the embeddings.create endpoint
             resp = openai_client.embeddings.create(model=self.embedding_model, input=batch, timeout=OPENAI_TIMEOUT)
-            # resp['data'] is a list aligned with inputs
-            batch_embeddings = [d["embedding"] for d in resp["data"]]
+            # resp.data is a list aligned with inputs
+            batch_embeddings = [d.embedding for d in resp.data]
             embeddings.extend(batch_embeddings)
             # small sleep to be polite
             time.sleep(0.1)
@@ -209,6 +209,8 @@ class PineconeClient:
         Query Pinecone with a precomputed query vector.
         Returns list of matches (id, score, metadata).
         """
+        if not self.index:
+            return []
         if filter:
             res = self.index.query(vector=query_vector, top_k=top_k, include_values=False, include_metadata=True, namespace=namespace, filter=filter)
         else:
@@ -230,7 +232,7 @@ class PineconeClient:
     # Delete / management
     # ---------------------
     def delete_vectors(self, ids: List[str], namespace: Optional[str] = None):
-        if not ids:
+        if not ids or not self.index:
             return
         # Pinecone delete supports ids list
         if namespace:
@@ -238,7 +240,7 @@ class PineconeClient:
         return self.index.delete(ids=ids)
 
     def delete_by_filter(self, filter: Dict[str, Any], namespace: Optional[str] = None):
-        if not filter:
+        if not filter or not self.index:
             return
         # Pinecone delete by filter
         if namespace:

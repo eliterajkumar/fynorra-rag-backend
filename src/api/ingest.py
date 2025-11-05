@@ -4,7 +4,7 @@ from src.auth.supabase_auth import require_auth, get_or_create_user
 from src.db.session import get_db_session
 from src.db.models import Document, IngestJob
 from src.storage.supabase_storage import SupabaseStorage
-from src.tasks.worker_upsert_pinecone import process_doc
+from src.tasks.celery_app import celery_app
 from src.config import Config
 import uuid
 from datetime import datetime
@@ -66,8 +66,8 @@ def upload_file():
         db.add(job)
         db.commit()
         
-        # Enqueue Celery task (new worker using Pinecone integrated embeddings)
-        process_doc.delay(job.id)
+        # Enqueue Celery task
+        celery_app.send_task('src.tasks.worker_upsert_pinecone.process_doc', args=[job.id])
         
         return jsonify({
             "jobId": job.id,
@@ -118,8 +118,8 @@ def scrape_url():
         db.add(job)
         db.commit()
         
-        # Enqueue Celery task (new worker using Pinecone integrated embeddings)
-        process_doc.delay(job.id)
+        # Enqueue Celery task
+        celery_app.send_task('src.tasks.worker_upsert_pinecone.process_doc', args=[job.id])
         
         return jsonify({
             "jobId": job.id,
@@ -165,4 +165,3 @@ def get_upload_status():
         
     finally:
         db.close()
-

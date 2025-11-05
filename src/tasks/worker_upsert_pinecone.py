@@ -4,10 +4,8 @@ import tempfile
 import traceback
 from datetime import datetime
 from celery import shared_task
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import (
-    PyPDFLoader, TextLoader, UnstructuredHTMLLoader, UnstructuredWordDocumentLoader
-)
+import pdfplumber
+from bs4 import BeautifulSoup
 from src.db.session import get_db_session
 from src.db.models import IngestJob, Document
 from src.embeddings.pinecone_client import PineconeClient
@@ -38,26 +36,35 @@ def process_doc(self, job_id: str):
         tmp_file = tempfile.NamedTemporaryFile(delete=False)
         storage.download_file(doc.storage_path, tmp_file.name)
 
-        # 2️⃣ Choose loader based on file type
+        # 2️⃣ Extract text based on file type
         ext = doc.file_type.lower()
-        if ext in ["pdf"]:
-            loader = PyPDFLoader(tmp_file.name)
+        text_content = ""
+        
+        if ext == "pdf":
+            with pdfplumber.open(tmp_file.name) as pdf:
+                text_content = "\n".join([page.extract_text() or "" for page in pdf.pages])
         elif ext in ["txt", "text"]:
-            loader = TextLoader(tmp_file.name)
+            with open(tmp_file.name, 'r', encoding='utf-8') as f:
+                text_content = f.read()
         elif ext in ["html", "htm"]:
-            loader = UnstructuredHTMLLoader(tmp_file.name)
-        elif ext in ["doc", "docx"]:
-            loader = UnstructuredWordDocumentLoader(tmp_file.name)
+            with open(tmp_file.name, 'r', encoding='utf-8') as f:
+                soup = BeautifulSoup(f.read(), 'html.parser')
+                text_content = soup.get_text()
         else:
             raise Exception(f"Unsupported file type: {ext}")
 
-        documents = loader.load()
-        if not documents:
+        if not text_content.strip():
             raise Exception("No content extracted from file")
 
-        # 3️⃣ Chunk text
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        chunks = splitter.split_documents(documents)
+        # 3️⃣ Simple text chunking
+        chunk_size = 1000
+        overlap = 200
+        chunks = []
+        
+        for i in range(0, len(text_content), chunk_size - overlap):
+            chunk_text = text_content[i:i + chunk_size]
+            if chunk_text.strip():
+                chunks.append(chunk_text)
 
         # 4️⃣ Generate embeddings
         client = OpenAI(api_key=Config.OPENAI_API_KEY)
@@ -65,8 +72,8 @@ def process_doc(self, job_id: str):
 
         namespace = f"user-{doc.user_id}"
         vectors = []
-        for i, chunk in enumerate(chunks):
-            text = chunk.page_content.strip()
+        for i, chunk_text in enumerate(chunks):
+            text = chunk_text.strip()
             if not text:
                 continue
             emb = client.embeddings.create(
