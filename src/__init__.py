@@ -1,2 +1,0 @@
-"""Fynorra RAG Backend package."""
-

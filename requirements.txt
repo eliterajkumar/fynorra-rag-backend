@@ -1,39 +1,8 @@
-# Flask and API
-Flask
-flask-cors
-gunicorn
-
-# Database
-SQLAlchemy
-psycopg2-binary
-
-# Supabase
+fastapi
+uvicorn[standard]
 supabase
-PyJWT
-
-# Vector DB
-pinecone
-pinecone-client
-
-# Async Tasks
-celery
-redis
-
-# Text Processing
-pdfplumber
-beautifulsoup4
+sentence-transformers
+numpy
+pymupdf
 requests
-openai
-
-# Security
-cryptography
-
-# Environment
-python-dotenv
-
-# Testing
-pytest
-
-# CLI
-click
-tenacity
+python-multipart
