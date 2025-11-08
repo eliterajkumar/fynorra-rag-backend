@@ -60,7 +60,12 @@ async def upload_file(
         from supabase import create_client
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
         try:
-            upload_res = supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, file_bytes, file_options={"upsert": True})
+            # Try upload first, if file exists, remove and re-upload
+            try:
+                upload_res = supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, file_bytes)
+            except:
+                supabase.storage.from_(SUPABASE_BUCKET).remove([storage_path])
+                upload_res = supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, file_bytes)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
 
