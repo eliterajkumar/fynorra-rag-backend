@@ -60,61 +60,50 @@ def generate_embeddings(chunks):
 
 # save to Supabase messages table
 def save_chunks_to_supabase(project_name, user_id, filename, chunks, embeddings, batch_size: int = 50):
-    try:
-        rows = []
-        for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
-            rows.append({
-                "project": project_name,
-                "role": "document",
-                "content": chunk,
-                "embedding": emb.tolist() if hasattr(emb, "tolist") else emb,
-                "filename": filename,
-                "user_id": user_id,
-                "chunk_index": idx
-            })
-            if len(rows) >= batch_size:
-                r = supabase.table("messages").insert(rows).execute()
-                if r.get("error"):
-                    return False, r["error"]
-                rows = []
-        if rows:
-            r = supabase.table("messages").insert(rows).execute()
-            if r.get("error"):
-                return False, r["error"]
-        return True, None
-    except Exception as e:
-        return False, str(e)
+    rows = []
+    for idx, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        rows.append({
+            "project": project_name,
+            "role": "document",
+            "content": chunk,
+            "embedding": emb.tolist() if hasattr(emb, "tolist") else emb,
+            "filename": filename,
+            "user_id": user_id,
+            "chunk_index": idx
+        })
+        if len(rows) >= batch_size:
+            supabase.table("messages").insert(rows).execute()
+            rows = []
+    if rows:
+        supabase.table("messages").insert(rows).execute()
 
 # retrieval: cosine similarity over stored embeddings (JSON)
 def retrieve_relevant_chunks(project_name: str, question: str, top_k: int = 5):
-    try:
-        resp = supabase.table("messages").select("content, embedding").eq("project", project_name).execute()
-        if resp.get("error"):
-            return [], f"DB error: {resp['error']}"
-        rows = resp.get("data") or []
-        if not rows:
-            return [], None
-        model = get_model()
-        q_emb = model.encode([question], convert_to_numpy=True)[0]
-        sims = []
-        for r in rows:
-            emb = r.get("embedding") or []
-            if not emb:
-                continue
-            try:
-                emb_arr = np.array(emb, dtype=float)
-            except Exception:
-                continue
-            denom = (np.linalg.norm(q_emb) * np.linalg.norm(emb_arr))
-            if denom == 0:
-                continue
-            sim = float(np.dot(q_emb, emb_arr) / denom)
-            sims.append((sim, r.get("content", "")))
-        sims.sort(reverse=True, key=lambda x: x[0])
-        top_texts = [text for _, text in sims[:top_k]]
-        return top_texts, None
-    except Exception as e:
-        return [], str(e)
+    resp = supabase.table("messages").select("content, embedding").eq("project", project_name).execute()
+    rows = resp.data or []
+    if not rows:
+        return []
+    
+    model = get_model()
+    q_emb = model.encode([question], convert_to_numpy=True)[0]
+    sims = []
+    
+    for r in rows:
+        emb = r.get("embedding") or []
+        if not emb:
+            continue
+        try:
+            emb_arr = np.array(emb, dtype=float)
+        except Exception:
+            continue
+        denom = (np.linalg.norm(q_emb) * np.linalg.norm(emb_arr))
+        if denom == 0:
+            continue
+        sim = float(np.dot(q_emb, emb_arr) / denom)
+        sims.append((sim, r.get("content", "")))
+    
+    sims.sort(reverse=True, key=lambda x: x[0])
+    return [text for _, text in sims[:top_k]]
 
 # call OpenRouter chat completions
 def call_openrouter_chat(messages, max_tokens: int = None):
@@ -149,11 +138,10 @@ def call_openrouter_chat(messages, max_tokens: int = None):
 
 # high-level QA pipeline
 def answer_question_with_context(project_name: str, question: str, top_k: int = 5):
-    chunks, err = retrieve_relevant_chunks(project_name, question, top_k=top_k)
-    if err:
-        return None, f"Retrieval error: {err}"
+    chunks = retrieve_relevant_chunks(project_name, question, top_k=top_k)
     if not chunks:
         return None, "No document chunks found for this project."
+    
     system_prompt = (
         "You are a helpful assistant. Use the provided document context to answer succinctly. "
         "If the answer is not in the context, say you don't know."
@@ -162,6 +150,7 @@ def answer_question_with_context(project_name: str, question: str, top_k: int = 
     for idx, c in enumerate(chunks):
         messages.append({"role": "system", "content": f"Context {idx+1}: {c}"})
     messages.append({"role": "user", "content": question})
+    
     answer, call_err = call_openrouter_chat(messages)
     if call_err:
         return None, f"LLM error: {call_err}"

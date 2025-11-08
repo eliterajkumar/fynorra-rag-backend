@@ -59,9 +59,10 @@ async def upload_file(
         storage_path = f"uploads/{user_id}/{filename}"
         from supabase import create_client
         supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
-        upload_res = supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, file_bytes, {"upsert": True})
-        if isinstance(upload_res, dict) and upload_res.get("error"):
-            raise HTTPException(status_code=500, detail=f"Storage upload failed: {upload_res['error']}")
+        try:
+            upload_res = supabase.storage.from_(SUPABASE_BUCKET).upload(storage_path, file_bytes, file_options={"upsert": True})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Storage upload failed: {str(e)}")
 
         # 2) Extract text
         if filename.lower().endswith(".pdf"):
@@ -78,9 +79,10 @@ async def upload_file(
             return {"status": "no_text", "message": "No textual content found in file."}
 
         embeddings = generate_embeddings(chunks)
-        ok, err = save_chunks_to_supabase(project, user_id, filename, chunks, embeddings)
-        if not ok:
-            raise HTTPException(status_code=500, detail=f"Save error: {err}")
+        try:
+            save_chunks_to_supabase(project, user_id, filename, chunks, embeddings)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Save error: {str(e)}")
 
         return {
             "status": "success",
@@ -95,6 +97,11 @@ async def upload_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy", "service": "Fynorra RAG Backend"}
 
 @app.post("/ask")
 async def ask(payload: dict = Body(...)):
