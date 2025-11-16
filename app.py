@@ -12,11 +12,11 @@ import requests
 from PyPDF2 import PdfReader
 
 # LangChain utilities
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings import SentenceTransformerEmbeddings
+from langchain_text_splitters import CharacterTextSplitter
+from langchain_community.embeddings import SentenceTransformerEmbeddings
 
 # FAISS vector store via langchain
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 
 # -------------------------
 # CONFIG
