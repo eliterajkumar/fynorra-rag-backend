@@ -13,7 +13,7 @@ from PyPDF2 import PdfReader
 
 # LangChain utilities
 from langchain_text_splitters import CharacterTextSplitter
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # FAISS vector store via langchain
 from langchain_community.vectorstores import FAISS
@@ -32,7 +32,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # small, fast
-embeddings = SentenceTransformerEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
 text_splitter = CharacterTextSplitter(chunk_size=800, chunk_overlap=100)
 
@@ -92,6 +92,10 @@ def call_openrouter_chat(system: str, user_prompt: str, max_tokens=500):
 # -------------------------
 # Routes
 # -------------------------
+@app.get("/")
+def root():
+    return {"status": "ok", "message": "RAG Backend API"}
+
 @app.get("/upload", response_class=HTMLResponse)
 def upload_form():
     return """
