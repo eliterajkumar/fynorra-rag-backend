@@ -32,9 +32,15 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 INDEX_DIR.mkdir(parents=True, exist_ok=True)
 
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # small, fast
-embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+embeddings = None  # Load lazily
 
 text_splitter = CharacterTextSplitter(chunk_size=800, chunk_overlap=100)
+
+def get_embeddings():
+    global embeddings
+    if embeddings is None:
+        embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
+    return embeddings
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -128,7 +134,7 @@ async def handle_upload(file: UploadFile = File(...)):
     idx_dir = INDEX_DIR / sid
     idx_dir.mkdir(parents=True, exist_ok=True)
     # Build store
-    store = FAISS.from_texts(docs, embedding=embeddings)
+    store = FAISS.from_texts(docs, embedding=get_embeddings())
     # persist
     store.save_local(str(idx_dir))
 
@@ -173,7 +179,7 @@ def api_chat(session_id: str, payload: dict):
     if not idx_dir.exists():
         return JSONResponse({"error":"Session index not found or expired"}, status_code=404)
     try:
-        store = FAISS.load_local(str(idx_dir), embeddings)
+        store = FAISS.load_local(str(idx_dir), get_embeddings())
     except Exception as e:
         return JSONResponse({"error": f"Failed loading index: {e}"}, status_code=500)
 
@@ -195,4 +201,4 @@ def api_chat(session_id: str, payload: dict):
 # main
 # -------------------------
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000)
