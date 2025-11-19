@@ -10,12 +10,19 @@ from services import llm_handler, db, pdf_processor
 router = APIRouter()
 logger = logging.getLogger("rag_router")
 
-# Simple system prompt for PDF chatbot
+# Friendly AI assistant persona
 BASE_PERSONA = (
-    "You are a helpful AI assistant that answers questions based on uploaded PDF documents. "
-    "Answer the user's question using only the information provided in the context. "
-    "If the information is not available in the context, say so clearly. "
-    "Keep your answers concise and relevant."
+    "You are a friendly and helpful AI assistant. You can answer general questions and also help with uploaded PDF documents. "
+    "When users ask general questions (greetings, general knowledge, etc.), respond naturally and helpfully. "
+    "When users ask about uploaded PDFs, use the provided context to answer. "
+    "Always maintain a friendly tone and ask how you can help further. "
+    "Be conversational and supportive."
+)
+
+GENERAL_PERSONA = (
+    "You are a friendly and helpful AI assistant. Answer the user's question naturally and helpfully. "
+    "Maintain a conversational tone and offer to help with more questions. "
+    "You can help with general knowledge, explanations, advice, and more."
 )
 
 @router.post("/upload-pdfs")
@@ -52,7 +59,7 @@ async def upload_pdfs(files: List[UploadFile] = File(...)):
 
 @router.post("/chat")
 async def chat_endpoint(request: Request):
-    """Chat with uploaded PDFs"""
+    """Chat with AI assistant - handles both general questions and PDF queries"""
     body = await request.json()
     message_text = body.get("message", "").strip()
     session_id = body.get("session_id")
@@ -63,39 +70,47 @@ async def chat_endpoint(request: Request):
     # Search PDF documents
     pdf_hits = db.search_pdf_documents(message_text, top_k=3) or []
     
-    if not pdf_hits:
-        return JSONResponse({
-            "reply": "I couldn't find relevant information in the uploaded PDFs for your question. Please upload PDFs first.",
-            "session_id": session_id or "default"
-        })
-    
-    # Build context from PDF hits
-    sources_parts = []
-    for h in pdf_hits:
-        filename = h.get("filename", "Unknown")
-        text = h.get("text") or ""
-        sources_parts.append(f"[PDF: {filename}]\n{text[:1200]}")
-    
-    context = "\n\n".join(sources_parts)
-    
     try:
-        # Get LLM response
-        reply = llm_handler.get_llm_response(
-            system_prompt=BASE_PERSONA,
-            context=context,
-            user_question=message_text,
-            request_type="pdf"
-        )
-        
-        return JSONResponse({
-            "reply": reply,
-            "session_id": session_id or "default",
-            "sources": len(pdf_hits)
-        })
+        if pdf_hits:
+            # User question relates to uploaded PDFs
+            sources_parts = []
+            for h in pdf_hits:
+                filename = h.get("filename", "Unknown")
+                text = h.get("text") or ""
+                sources_parts.append(f"[PDF: {filename}]\n{text[:1200]}")
+            
+            context = "\n\n".join(sources_parts)
+            
+            reply = llm_handler.get_llm_response(
+                system_prompt=BASE_PERSONA,
+                context=context,
+                user_question=message_text,
+                request_type="pdf"
+            )
+            
+            return JSONResponse({
+                "reply": reply,
+                "session_id": session_id or "default",
+                "sources": len(pdf_hits)
+            })
+        else:
+            # General question - no PDF context needed
+            reply = llm_handler.get_llm_response(
+                system_prompt=GENERAL_PERSONA,
+                context="",
+                user_question=message_text,
+                request_type="chat"
+            )
+            
+            return JSONResponse({
+                "reply": reply,
+                "session_id": session_id or "default",
+                "sources": 0
+            })
         
     except Exception as e:
         logger.error(f"LLM error: {e}")
         return JSONResponse({
-            "reply": "Sorry, I encountered an error processing your question. Please try again.",
+            "reply": "माफ करें, मुझे आपके सवाल का जवाब देने में कुछ तकनीकी समस्या हो रही है। कृपया दोबारा कोशिश करें। मैं आपकी कैसे मदद कर सकता हूं?",
             "error": str(e)
         }, status_code=500)
