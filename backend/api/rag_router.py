@@ -10,20 +10,66 @@ from services import llm_handler, db, pdf_processor
 router = APIRouter()
 logger = logging.getLogger("rag_router")
 
-# Friendly AI assistant persona
+def format_response(response: str) -> str:
+    """Clean and format AI response for better presentation with strict length limits"""
+    if not response:
+        return "Sorry, I couldn't generate a response. Please try again! 😅"
+    
+    # Remove excessive whitespace and clean up
+    response = response.strip()
+    
+    # Remove any markdown formatting that might look messy
+    response = response.replace('**', '')
+    response = response.replace('###', '')
+    response = response.replace('##', '')
+    
+    # Ensure it doesn't start with redundant phrases
+    redundant_starts = [
+        "Based on the provided context,",
+        "According to the document,",
+        "From the information provided,",
+        "The document states that,"
+    ]
+    
+    for start in redundant_starts:
+        if response.startswith(start):
+            response = response[len(start):].strip()
+    
+    # STRICT CHARACTER LIMIT - Max 400 characters
+    if len(response) > 400:
+        # Find last complete sentence within limit
+        truncated = response[:400]
+        last_sentence_end = max(
+            truncated.rfind('.'),
+            truncated.rfind('!'),
+            truncated.rfind('?')
+        )
+        if last_sentence_end > 200:  # Ensure we have at least 200 chars
+            response = truncated[:last_sentence_end + 1]
+        else:
+            response = truncated[:380] + "..."
+    
+    # Ensure proper sentence structure
+    if not response.endswith(('.', '!', '?', '✨', '😊', '😄', '😅', '...')):
+        response += "."
+    
+    return response
+
+# PDF-focused AI assistant persona with strict length limits
 BASE_PERSONA = (
-    "You are a friendly and helpful AI assistant. You can answer general questions and also help with uploaded PDF documents. "
-    "When users ask general questions (greetings, general knowledge, etc.), respond naturally and helpfully. "
-    "When users ask about uploaded PDFs, use the provided context to answer. "
-    "Always maintain a friendly tone and ask how you can help further. "
-    "Be conversational and supportive."
+    "You are a PDF document assistant that ONLY answers questions based on uploaded PDF content. "
+    "ULTRA STRICT RULES:\n"
+    "1. ONLY answer if the question relates to the provided PDF context\n"
+    "2. Keep responses EXTREMELY SHORT - Maximum 2-3 sentences, 300 characters max\n"
+    "3. Use 1-2 relevant emojis only 📄\n"
+    "4. Sound conversational like ChatGPT, not robotic\n"
+    "5. NO need to mention 'According to document' - just give direct answer\n"
+    "6. End with brief follow-up question (optional)\n"
+    "7. Use Hindi/English mix naturally if user uses Hindi\n"
+    "8. Be CONCISE - every word counts!"
 )
 
-GENERAL_PERSONA = (
-    "You are a friendly and helpful AI assistant. Answer the user's question naturally and helpfully. "
-    "Maintain a conversational tone and offer to help with more questions. "
-    "You can help with general knowledge, explanations, advice, and more."
-)
+# Only PDF-focused responses are supported now
 
 @router.post("/upload-pdfs")
 async def upload_pdfs(files: List[UploadFile] = File(...)):
@@ -77,33 +123,39 @@ async def chat_endpoint(request: Request):
             for h in pdf_hits:
                 filename = h.get("filename", "Unknown")
                 text = h.get("text") or ""
-                sources_parts.append(f"[PDF: {filename}]\n{text[:1200]}")
+                # Extract more relevant chunks and clean them
+                clean_text = text.replace('\n', ' ').replace('\r', ' ').strip()
+                sources_parts.append(f"From {filename}: {clean_text[:800]}")
             
             context = "\n\n".join(sources_parts)
+            
+            # Add strict instruction for PDF-only response
+            enhanced_question = f"{message_text}\n\nIMPORTANT: Only answer if this question is related to the PDF content provided above. If the question is about general topics, greetings, or unrelated matters, politely decline. Use emojis and keep it brief but informative based on PDF content only."
             
             reply = llm_handler.get_llm_response(
                 system_prompt=BASE_PERSONA,
                 context=context,
-                user_question=message_text,
+                user_question=enhanced_question,
                 request_type="pdf"
             )
             
+            # Clean and format the response
+            formatted_reply = format_response(reply)
+            
             return JSONResponse({
-                "reply": reply,
+                "reply": formatted_reply,
                 "session_id": session_id or "default",
                 "sources": len(pdf_hits)
             })
         else:
-            # General question - no PDF context needed
-            reply = llm_handler.get_llm_response(
-                system_prompt=GENERAL_PERSONA,
-                context="",
-                user_question=message_text,
-                request_type="chat"
+            # No PDF context found - politely decline to answer general questions
+            polite_decline = (
+                "मुझे खुशी होगी आपकी मदद करने में! 😊 लेकिन मैं केवल uploaded PDF documents के बारे में ही जवाब दे सकता हूँ। "
+                "कृपया पहले कोई PDF upload करें और फिर उससे related questions पूछें। 📄"
             )
             
             return JSONResponse({
-                "reply": reply,
+                "reply": polite_decline,
                 "session_id": session_id or "default",
                 "sources": 0
             })

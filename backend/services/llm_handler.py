@@ -35,15 +35,15 @@ def get_llm_response(
     """
     model_to_use = model or DEFAULT_MODEL
 
-    # Dynamic token rules
+    # Very strict token limits for ultra-concise responses
     if request_type == "chat":
-        max_tokens = 500
+        max_tokens = 100  # Very short general chat
     elif request_type == "pdf":
-        max_tokens = 1000
+        max_tokens = 150  # Very concise PDF responses
     elif request_type == "summary":
-        max_tokens = 2000
+        max_tokens = 200  # Brief summaries
     else:
-        max_tokens = 500  # fallback
+        max_tokens = 100  # fallback
 
     # Construct user message with optional context
     user_message = (
